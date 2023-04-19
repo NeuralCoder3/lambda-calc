@@ -26,7 +26,7 @@ Fixpoint lift (e : lambda) (k : nat) (n : nat) : lambda :=
   | app e1 e2 => app (lift e1 k n) (lift e2 k n)
   | lam e => lam (lift e (S k) n)
   end.
-Notation lift0 e n := (lift e 0 n).
+Notation lift0 n e := (lift e 0 n).
 
 
 (*
@@ -41,7 +41,7 @@ start with k=0
 Fixpoint subst (x : lambda) (k : nat) (e:lambda) : lambda :=
   match e with
   | var n => 
-    if Nat.eqb n k then lift0 x k (* lift e over all inner binders *)
+    if Nat.eqb n k then lift0 k x (* lift e over all inner binders *)
     else if Nat.ltb n k then var n (* keep inner vars the same *)
     else var (n-1) (* remove binder k => cope with open terms (redex under binder) *)
   | app e1 e2 => app (subst x k e1) (subst x k e2)
@@ -212,10 +212,10 @@ B0 := λ x y. x
 B1 := λ x y. y
 *)
 
-Definition nil := λ, λ, var 1.
-Definition cons v vs := λ, λ, var 1 ⋅ v ⋅ vs.
-Definition B0 := λ, λ, var 0.
-Definition B1 := λ, λ, var 1.
+Definition nil := λ, λ, var 0.
+(* Definition cons v vs := λ, λ, var 1 ⋅ v ⋅ vs. *)
+Definition B0 := λ, λ, var 1.
+Definition B1 := λ, λ, var 0.
 
 (*
 
@@ -226,8 +226,8 @@ F1 = e (λ x. e (λ y. c (x y)))
 F C (encode M :: N) 
   ~> C M N
 
-F0 C (a::xs) 
-  ~> C (a K S) xs
+F0 C (b::xs) 
+  ~> C (b K S) xs
 F1 C F (enc A ++ enc B ++ ys)
   ~> F (λ x. F (λ y. C (x y))) (enc A ++ enc B ++ ys)
   ~> ...
@@ -238,16 +238,16 @@ F1 C F (enc A ++ enc B ++ ys)
 *)
 
 Definition F0 C :=
-  λ, var 0 ⋅ (λ, C ⋅ (var 0 ⋅ lam_K ⋅ lam_S)).
-Definition F1 C F :=
-  F ⋅ (λ, F ⋅ (λ, C ⋅ (var 1 ⋅ var 0))).
+  λ, var 0 ⋅ (λ, (lift0 2 C) ⋅ (var 0 ⋅ lam_K ⋅ lam_S)).
+Definition F1 F C :=
+  F ⋅ (λ, (lift0 1 F) ⋅ (λ, (lift0 2 C) ⋅ (var 1 ⋅ var 0))).
 
 Definition F' := 
   (* λ f c s. s *)
   (λ, λ, λ, var 0 ⋅ 
     (* λ a. a F0 F1 *)
-    (* F0 C, F1 C F *)
-    (λ, var 0 ⋅ (F0 (var 2) ⋅ F1 (var 2) (var 3)))).
+    (* F0 C, F1 F C *)
+    (λ, var 0 ⋅ (F0 (var 2)) ⋅ (F1 (var 3) (var 2)))).
 Definition F := lam_Y ⋅ F'.
 
 
@@ -332,36 +332,6 @@ Proof.
     easy.
 Qed.
 
-Definition F0_spec C a xs :=
-  (F0 C) ⋅ (cons a xs) ≡ λ, C ⋅ (a ⋅ lam_K ⋅ lam_S) ⋅ xs.
-
-Lemma F0_spec_proof C a xs:
-  closed0 C -> closed0 a -> closed0 xs ->
-  F0_spec C a xs.
-Proof.
-  unfold F0_spec.
-  intros HC_C HC_a HC_xs.
-  unfold cons, F0.
-  (* remember lam_K as K.
-  remember lam_S as S. *)
-  eexists;split. 
-  2: apply steps_refl.
-  - eapply steps_trans.
-    apply steps_beta.
-    cbn;clear_lift_subst.
-
-    eapply steps_trans.
-    apply steps_beta.
-    cbn;clear_lift_subst.
-
-    eapply steps_trans.
-    apply steps_lam, steps_app_left, steps_beta.
-    cbn;clear_lift_subst.
-
-    fold lam_K lam_S.
-    apply steps_refl.
-Qed.
-
 Inductive SK : Type :=
   | S : SK
   | K : SK
@@ -379,6 +349,7 @@ Fixpoint encode_list (l : list SK) : list bool :=
   | [] => []
   | x::xs => encode x ++ encode_list xs
   end.
+(* Definition encode_list := concat (map encode). *)
 
 Fixpoint to_lam (s : SK) : lambda :=
   match s with
@@ -387,15 +358,27 @@ Fixpoint to_lam (s : SK) : lambda :=
   | SK_app s1 s2 => app (to_lam s1) (to_lam s2)
   end.
 
-Fixpoint embed_list (l : list bool) : lambda :=
+(* Fixpoint embed_list (l : list bool) : lambda :=
   match l with
   | [] => nil
   | x::xs => cons (if x then B1 else B0) (embed_list xs)
+  end. *)
+
+(*
+  nested pair approach
+  [] => λ x y. y
+  [x,y, ..., z] => <x, <y, ..., <z, nil>>>
+  <a,b> => λ z. z a b
+*)
+Definition tuple a b := λ, var 0 ⋅ a ⋅ b.
+Fixpoint embed_lam_list (xs : list lambda) : lambda :=
+  match xs with
+  | [] => λ, λ, var 0
+  | x::xs => tuple x (embed_lam_list xs)
   end.
 
-Definition F_spec C (x:SK) (xs:list SK) :=
-  (* F ⋅ C ⋅ (embed_list (encode_list (x::xs))) ≡ C ⋅ (to_lam x) ⋅ (embed_list(encode_list xs)). *)
-  F ⋅ C ⋅ (embed_list (encode x ++ encode_list xs)) ≡ C ⋅ (to_lam x) ⋅ (embed_list(encode_list xs)).
+Definition embed_list (l : list bool) : lambda :=
+  embed_lam_list (map (fun (x:bool) => if x then B1 else B0) l).
 
 Lemma equiv_trans e1 e2 e3:
   e1 ≡ e2 -> e2 ≡ e3 -> e1 ≡ e3.
@@ -405,25 +388,44 @@ Proof.
   (* confluence at e2 -> e12, e23 *)
 Admitted.
 
+
+Definition F0_spec C b xs :=
+  (F0 C) ⋅ (tuple b xs) ≡ C ⋅ (b ⋅ lam_K ⋅ lam_S) ⋅ xs.
+
 Definition F1_spec C A B xs :=
-  (F1 C F) ⋅ 
+  (F1 F C) ⋅ 
   embed_list (encode A ++ encode B ++ encode_list xs) ≡ 
   C ⋅ (to_lam A ⋅ to_lam B) ⋅ (embed_list (encode_list xs)).
 
-(* Lemma closed_F : closed0 F.
-Proof.
-  unfold F; firstorder;cbn;lia.
-Qed.
+Definition F_spec C (x:SK) (xs:list SK) :=
+  F ⋅ C ⋅ (embed_list (encode x ++ encode_list xs)) ≡ C ⋅ (to_lam x) ⋅ (embed_list(encode_list xs)).
 
-Lemma closed_F' : closed0 F'.
+Lemma F0_spec_proof C a xs:
+  closed0 C -> closed0 a -> closed0 xs ->
+  F0_spec C a xs.
 Proof.
-  firstorder;cbn;lia.
-Qed.
+  unfold F0_spec.
+  intros HC_C HC_a HC_xs.
+  unfold F0.
+  (* remember lam_K as K.
+  remember lam_S as S. *)
+  eexists;split. 
+  2: apply steps_refl.
+  - eapply steps_trans.
+    apply steps_beta.
+    cbn;clear_lift_subst.
 
-Lemma closed_Y : closed0 lam_Y.
-Proof.
-  firstorder;cbn;lia.
-Qed.*)
+    eapply steps_trans.
+    apply steps_beta.
+    cbn;clear_lift_subst.
+
+    eapply steps_trans.
+    apply steps_app_left, steps_beta.
+    cbn;clear_lift_subst.
+
+    fold lam_K lam_S.
+    apply steps_refl.
+Qed.
 
 Lemma closed_SK x: closed0 (to_lam x).
 Proof.
@@ -433,22 +435,24 @@ Qed.
 Hint Resolve closed_SK.
 
 Lemma F1_spec_proof C A B xs:
-  (forall C x xs, closed0 C -> F_spec C x xs) ->
+  (* (forall C x xs, closed0 C -> F_spec C x xs) -> *)
+  (forall C, closed0 C -> F_spec C A (B::xs) ) ->
+  (forall C, closed0 C -> F_spec C B (xs) ) ->
   closed0 C -> 
   F1_spec C A B xs.
 Proof.
-  intros F_spec_proof HC_C.
+  intros F_spec_proof_A F_spec_proof_B HC_C.
   unfold F1_spec, F1.
   remember (to_lam A) as Al.
   remember (to_lam B) as Bl.
   eapply equiv_trans.
   {
-    remember (λ, F ⋅ (λ, C ⋅ (var 1 ⋅ var 0))) as Cont.
-    pose proof (F_spec_proof Cont A (B::xs)).
-    unfold F_spec in H; cbn in H.
+    remember (λ, (lift0 1 F) ⋅ (λ, (lift0 2 C) ⋅ (var 1 ⋅ var 0))) as Cont.
+    pose proof (F_spec_proof_A Cont).
+    unfold F_spec in H; cbn -[lift0] in H.
     subst.
     apply H.
-    resolve_closed.
+    clear_lift_subst.
   }
   eapply equiv_trans.
   {
@@ -460,7 +464,7 @@ Proof.
   (* cbn -[F].  clear_lift_subst;try now first [apply closed_F|apply closed_SK]. *)
   eapply equiv_trans.
   {
-    apply F_spec_proof.
+    apply F_spec_proof_B.
     clear_lift_subst.
     (* firstorder;cbn;try lia. *)
     (* all: apply closed_inc; 
@@ -473,7 +477,8 @@ Proof.
   cbn;clear_lift_subst.
   (* all: try apply closed_SK. *)
   now subst; apply steps_refl.
-Defined.
+  (* or leave open using Defined for transparency check of recursion *)
+Qed.
 
 Lemma equiv_app_left e1 e2 e3:
   e1 ≡ e2 -> e1 ⋅ e3 ≡ e2 ⋅ e3.
@@ -488,70 +493,337 @@ Qed.
 Hint Resolve closed_Y : core.
 Hint Resolve closed_F' : core. *)
 
-Lemma F_spec_proof C ys:
+Lemma F_fix C:
   closed0 C -> 
-  match ys with
-  | [] => F ⋅ C ⋅ nil ≡ λ, var 0
-  | x::xs => F_spec C x xs
-  end.
+  F ⋅ C ≡ F' ⋅ F ⋅ C.
 Proof.
-  induction ys as [|x xs IH].
-  - intros HC_C.
-    unfold F.
-    eapply equiv_trans.
-    {
-      do 2 apply equiv_app_left.
-      apply fixpoint.
-      resolve_closed.
-    }
-    eexists;split;[|apply steps_refl].
+  intros HC_C.
+  unfold F.
+  eapply equiv_trans.
+  {
+    apply equiv_app_left.
+    apply fixpoint.
+    resolve_closed.
+  }
+  eexists;split;[|apply steps_refl].
+  apply steps_refl.
+Qed.
 
-    eapply steps_trans.
+(* Ltac beta_reduce :=
+  repeat (
+    eapply equiv_trans;[
+      repeat first [
+        apply steps_beta|
+        apply steps_app_left
+      ]
+    |]
+  ). *)
+
+Ltac strong_fold e :=
+  let e_eval := eval cbn in e in
+  change e_eval with e.
+  
+
+Lemma F_unfold C xs:
+  closed0 C -> 
+  closed0 xs -> 
+  F ⋅ C ⋅ xs ≡ 
+  xs ⋅ (λ, (var 0) ⋅ (F0 C) ⋅ (F1 F C)).
+Proof.
+  intros HC_C HC_xs. 
+  eapply equiv_trans.
+  {
+    apply equiv_app_left.
+    now apply F_fix.
+  }
+  eexists;split;[|apply steps_refl].
+
+  (* inline F and C *)
+  eapply steps_trans.
+  {
     do 2 apply steps_app_left.
     apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
-
-    eapply steps_trans.
+  }
+  cbn -[lam_Y F']; clear_lift_subst.
+  (* cbn -[lam_Y F0 F']; clear_lift_subst. *)
+  eapply steps_trans.
+  {
     apply steps_app_left.
     apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
+  }
+  cbn -[lam_Y F']; clear_lift_subst.
 
-    eapply steps_trans.
+  (* fold F0 C *)
+  pose (X := F0 C).
+  assert (X=F0 C) by reflexivity.
+  unfold F0 in H.
+  rewrite closed0_lift in H;[|assumption].
+  setoid_rewrite <- H;subst X;clear H.
+
+  pose (X := F1 F C).
+  assert (X=F1 F C) by reflexivity.
+  unfold F1, F in H.
+  do 2  rewrite closed0_lift in H;try resolve_closed.
+  setoid_rewrite <- H;subst X.
+
+  (* reduce app tuple *)
+  eapply steps_trans.
+  {
     apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
+  }
+  cbn -[lam_Y F0 F1 F' tuple]; clear_lift_subst.
+  2-3: cbn;clear_lift_subst.
 
-    eapply steps_trans.
+  apply steps_refl.
+Qed.
+
+
+
+Lemma F_app_head C b xs:
+  closed0 C -> 
+  closed0 b -> closed0 xs -> 
+  F ⋅ C ⋅ (tuple b xs) ≡ b ⋅ (F0 C) ⋅ (F1 F C) ⋅ xs.
+Proof.
+  intros HC_C HC_b HC_xs. 
+  eapply equiv_trans.
+  apply F_unfold;cbn;try resolve_closed.
+  eexists;split;[|apply steps_refl].
+
+  (* apply tuple *)
+  eapply steps_trans.
+  {
     apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
-
-    admit.
-  - destruct xs.
-
-(λ, λ, var 0
-         ⋅ (F0 (var 2)
-            ⋅ ((lam_Y ⋅ F') ⋅ (λ, C ⋅ (λ, var 2 ⋅ (var 1 ⋅ var 0))))))
-
-
-    eapply steps_trans.
-    apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
-
-    eapply steps_trans.
-    apply steps_beta.
-    cbn -[lam_Y F0 F']; clear_lift_subst.
-
-
-    cbn.
-    eexists;split;[|apply steps_refl].
+  }
+  cbn -[lam_Y F0 F1 F']; clear_lift_subst.
+  2-3: cbn;clear_lift_subst.
+  (* apply head *)
+  eapply steps_trans.
+  {
     apply steps_app_left.
     apply steps_beta.
-  unfold F_spec.
-Admitted.
+  }
+  cbn -[lam_Y F0 F1 F']; clear_lift_subst.
+  2-3: cbn;clear_lift_subst.
+
+  apply steps_refl.
+Qed.
+
+Lemma B0_select a b:
+  closed0 a -> closed0 b ->
+  B0 ⋅ a ⋅ b ≡ a.
+Proof.
+  (* could be strengthened => a should only be forbidden from binding b *)
+  intros.
+  eexists;split;[|apply steps_refl].
+  eapply steps_trans.
+  apply steps_app_left,steps_beta. cbn;clear_lift_subst.
+  eapply steps_trans.
+  apply steps_beta. cbn;clear_lift_subst.
+  apply steps_refl.
+Qed.
+
+Lemma B1_select a b:
+  closed0 a -> closed0 b ->
+  B1 ⋅ a ⋅ b ≡ b.
+Proof.
+  (* could be strengthened => a should only be forbidden from binding b *)
+  intros.
+  eexists;split;[|apply steps_refl].
+  eapply steps_trans.
+  apply steps_app_left,steps_beta. cbn;clear_lift_subst.
+  eapply steps_trans.
+  apply steps_beta. cbn;clear_lift_subst.
+  apply steps_refl.
+Qed.
+
+Corollary F_app_0 C xs:
+  closed0 C -> 
+  closed0 xs -> 
+  F ⋅ C ⋅ (tuple B0 xs) ≡ F0 C ⋅ xs.
+Proof.
+  intros.
+  eapply equiv_trans.
+  apply F_app_head;try assumption;clear_lift_subst.
+  apply equiv_app_left, B0_select.
+  all: cbn;clear_lift_subst.
+Qed.
+
+Corollary F_app_1 C xs:
+  closed0 C -> 
+  closed0 xs -> 
+  F ⋅ C ⋅ (tuple B1 xs) ≡ F1 F C ⋅ xs.
+Proof.
+  intros.
+  eapply equiv_trans.
+  apply F_app_head;try assumption;clear_lift_subst.
+  apply equiv_app_left, B1_select.
+  all: cbn;clear_lift_subst.
+Qed.
 
 
-(* Lemma F_spec_proof C x xs:
+Lemma equiv_app_right e1 e2 e3:
+  e1 ≡ e2 -> e3 ⋅ e1 ≡ e3 ⋅ e2.
+Proof.
+  (* conceptually: could delay eval until needed, confluence *)
+  intros (e12&H1_2&H2_1).
+  eexists;split.
+  all: apply steps_app_right;eassumption.
+Qed.
+
+
+(*
+F0 0, F0 1
+=> F⋅K, F⋅S
+*)
+Corollary F0_app_0 C xs:
+  closed0 C -> closed0 xs ->
+  F0 C ⋅ (tuple B0 xs) ≡ C ⋅ lam_K ⋅ xs.
+Proof.
+  intros.
+  eapply equiv_trans.
+  apply F0_spec_proof;resolve_closed.
+  apply equiv_app_left, equiv_app_right, B0_select;resolve_closed.
+Qed.
+
+Corollary F0_app_1 C xs:
+  closed0 C -> closed0 xs ->
+  F0 C ⋅ (tuple B1 xs) ≡ C ⋅ lam_S ⋅ xs.
+Proof.
+  intros.
+  eapply equiv_trans.
+  apply F0_spec_proof;resolve_closed.
+  apply equiv_app_left, equiv_app_right, B1_select;resolve_closed.
+Qed.
+
+Lemma closed_embed_lam_list xs:
+  (* (forall x, In x xs -> closed0 x) -> *)
+  Forall (closed 0) xs ->
+  closed0 (embed_lam_list xs).
+Proof.
+  induction 1;cbn;resolve_closed.
+Qed.
+
+Corollary closed_embed_list xs:
+  closed0 (embed_list xs).
+Proof.
+  unfold embed_list.
+  eapply closed_embed_lam_list.
+  induction xs;constructor;auto.
+  destruct a;cbn;resolve_closed.
+Qed.
+
+Hint Resolve closed_embed_lam_list.
+Hint Resolve closed_embed_list.
+
+Corollary F_app_K C xs:
+  closed0 C -> 
+  F ⋅ C ⋅ (embed_list (encode K ++ encode_list xs)) ≡ C ⋅ lam_K ⋅ (embed_list (encode_list xs)).
+Proof.
+  intros.
+  cbn.
+  eapply equiv_trans.
+  apply F_app_0.
+  3: apply F0_app_0.
+  all: cbn;firstorder.
+  apply closed_inc, closed_embed_list.
+Qed.
+
+Corollary F_app_S C xs:
+  closed0 C -> 
+  F ⋅ C ⋅ (embed_list (encode S ++ encode_list xs)) ≡ C ⋅ lam_S ⋅ (embed_list (encode_list xs)).
+Proof.
+  intros.
+  cbn.
+  eapply equiv_trans.
+  apply F_app_0.
+  3: apply F0_app_1.
+  all: cbn;firstorder.
+  apply closed_inc, closed_embed_list.
+Qed.
+
+(*
+Now app
+*)
+Check F_app_1.
+Check F1_spec_proof.
+Print F1_spec.
+
+Lemma F_app_app C A B xs:
+  (forall C : lambda, closed0 C -> F_spec C A (B :: xs)) ->
+  (forall C : lambda, closed0 C -> F_spec C B xs) ->
+  closed0 C ->
+  (F ⋅ C) ⋅ embed_list (encode (SK_app A B) ++ encode_list xs)
+  ≡ (C ⋅ to_lam (SK_app A B)) ⋅ embed_list (encode_list xs).
+Proof.
+  intros.
+  cbn.
+  rewrite <- app_assoc.
+  eapply equiv_trans.
+  apply F_app_1;cbn;clear_lift_subst.
+  1: apply closed_embed_list.
+  now apply F1_spec_proof;cbn;clear_lift_subst.
+Qed.
+
+Lemma F_nil C:
+  closed0 C ->
+  F ⋅ C ⋅ nil ≡ λ, var 0.
+Proof.
+  intros HC_C.
+  eapply equiv_trans.
+  apply F_unfold;try resolve_closed.
+  eexists;split;[|apply steps_refl].
+  apply steps_beta.
+Qed.
+
+
+Lemma F_spec_proof C x xs:
   closed0 C -> 
   F_spec C x xs.
 Proof.
-  unfold F_spec.
-Admitted. *)
+  intros HC_C.
+  induction x in C,HC_C,xs |-*.
+  + now apply F_app_S.
+  + now apply F_app_K.
+  + apply F_app_app;eauto.
+Qed.
+
+
+(*
+Now in high-level Gallina
+*)
+Section Gallina.
+
+  Variable (T:Type).
+  Variable (I:T).
+
+  Definition G_K (x y : T) : T := x.
+  Definition G_S x (y:T->T) (z : T) : T := (x z) (y z).
+
+  (* Implicit Type (C:forall T U, T -> list bool -> U). *)
+  Implicit Type (C:SK->list bool -> T).
+
+  Definition G_F0 C := 
+    fun xs =>
+    match xs with
+    | x::xs => 
+      match x with
+      | false => C K xs
+      | true => C S xs
+      end
+    | nil => I
+    end.
+
+  Definition G_F1 F C :=
+    F (fun A => F (fun B => C (SK_app A B))
+
+
+  Fixpoint F :=
+    fun C xs =>
+    match xs with
+    | x::xs => 
+      match x with
+      | false => F0 C xs
+      | true => F1 F C xs
+      end
+    | nil => C
+    end.
