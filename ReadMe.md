@@ -3,7 +3,7 @@
 In this files, we verify a self interpreter for the SK lambda calculus. 
 The idea is based on 
 ["Functional Bits: Lambda Calculus based
-Algorithmic Information Theory" (John Tromp 2022)](https://tromp.github.io/cl/LC.pdf).
+Algorithmic Information Theory" (John Tromp 2022)](https://tromp.github.io/cl/LC.pdf) ([Github Repository](https://github.com/tromp/AIT)).
 
 An SK-expression is encoded as a bit-sequence which can be interpreted using a lambda calculus expression.
 
@@ -50,3 +50,5 @@ The proofs work as follows:
   - F reduction on K/S encoding
   - F₁ reduction to application
   - induction on the encoded SK term
+
+
